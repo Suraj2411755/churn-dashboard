@@ -2157,3 +2157,218 @@ else:
         towers.
         """
     )
+elif page.startswith("8"):
+    st.title("📡 Network Quality vs Churn Risk")
+
+    st.write(
+        "Analyze whether customers with weaker network quality "
+        "also have higher predicted churn risk."
+    )
+
+    # Check whether prediction has already been performed
+    if "prediction_output" not in st.session_state:
+        st.warning(
+            "Please run Churn Prediction first and generate customer predictions."
+        )
+        st.stop()
+
+    prediction_df = st.session_state["prediction_output"]
+
+    uploaded_network = st.file_uploader(
+        "Upload network_measurements.csv",
+        type=["csv"],
+        key="network_churn_csv"
+    )
+
+    if uploaded_network is not None:
+
+        network_df = pd.read_csv(uploaded_network)
+
+        required_columns = [
+            "customer_id",
+            "operator",
+            "rsrp",
+            "rsrq",
+            "sinr"
+        ]
+
+        missing = [
+            col for col in required_columns
+            if col not in network_df.columns
+        ]
+
+        if missing:
+            st.error(
+                f"Missing columns: {', '.join(missing)}"
+            )
+            st.stop()
+
+        # Check customer ID in prediction output
+        if "customer_id" not in prediction_df.columns:
+            st.error(
+                "The churn prediction output must contain "
+                "'customer_id' for merging."
+            )
+            st.stop()
+
+        # Merge
+        merged_df = pd.merge(
+            network_df,
+            prediction_df,
+            on="customer_id",
+            how="inner"
+        )
+
+        if merged_df.empty:
+            st.warning(
+                "No matching customer_id values were found "
+                "between the two datasets."
+            )
+            st.stop()
+
+        st.success(
+            f"{len(merged_df)} customers successfully matched."
+        )
+
+        # ---------------------------------
+        # Network quality classification
+        # ---------------------------------
+
+        def classify_rsrp(value):
+            if pd.isna(value):
+                return "Unknown"
+            elif value >= -80:
+                return "Excellent"
+            elif value >= -90:
+                return "Good"
+            elif value >= -100:
+                return "Fair"
+            else:
+                return "Poor"
+
+        def classify_rsrq(value):
+            if pd.isna(value):
+                return "Unknown"
+            elif value >= -10:
+                return "Excellent"
+            elif value >= -15:
+                return "Good"
+            elif value >= -20:
+                return "Fair"
+            else:
+                return "Poor"
+
+        def classify_sinr(value):
+            if pd.isna(value):
+                return "Unknown"
+            elif value >= 20:
+                return "Excellent"
+            elif value >= 13:
+                return "Good"
+            elif value >= 0:
+                return "Fair"
+            else:
+                return "Poor"
+
+        merged_df["RSRP_Quality"] = (
+            merged_df["rsrp"].apply(classify_rsrp)
+        )
+
+        merged_df["RSRQ_Quality"] = (
+            merged_df["rsrq"].apply(classify_rsrq)
+        )
+
+        merged_df["SINR_Quality"] = (
+            merged_df["sinr"].apply(classify_sinr)
+        )
+
+        # ---------------------------------
+        # KPIs
+        # ---------------------------------
+
+        st.subheader("📊 Combined Analysis")
+
+        col1, col2, col3, col4 = st.columns(4)
+
+        col1.metric(
+            "Matched Customers",
+            len(merged_df)
+        )
+
+        col2.metric(
+            "Avg RSRP",
+            f"{merged_df['rsrp'].mean():.1f} dBm"
+        )
+
+        col3.metric(
+            "Avg RSRQ",
+            f"{merged_df['rsrq'].mean():.1f} dB"
+        )
+
+        col4.metric(
+            "Avg SINR",
+            f"{merged_df['sinr'].mean():.1f} dB"
+        )
+
+        # ---------------------------------
+        # Churn probability
+        # ---------------------------------
+
+        if "Churn_Probability" in merged_df.columns:
+
+            st.subheader("📈 Network Quality vs Churn Risk")
+
+            analysis = (
+                merged_df
+                .groupby("RSRP_Quality")
+                ["Churn_Probability"]
+                .mean()
+                .reset_index()
+            )
+
+            st.bar_chart(
+                analysis.set_index("RSRP_Quality")
+            )
+
+            st.subheader("📡 RSRP vs Churn Probability")
+
+            st.scatter_chart(
+                merged_df[
+                    ["rsrp", "Churn_Probability"]
+                ]
+            )
+
+        # ---------------------------------
+        # Operator analysis
+        # ---------------------------------
+
+        st.subheader("🏢 Operator-wise Network & Churn Analysis")
+
+        operator_analysis = (
+            merged_df
+            .groupby("operator")
+            .agg(
+                Customers=("customer_id", "count"),
+                Avg_RSRP=("rsrp", "mean"),
+                Avg_RSRQ=("rsrq", "mean"),
+                Avg_SINR=("sinr", "mean"),
+                Avg_Churn_Risk=("Churn_Probability", "mean")
+            )
+            .reset_index()
+        )
+
+        st.dataframe(
+            operator_analysis,
+            use_container_width=True
+        )
+
+        # ---------------------------------
+        # Data
+        # ---------------------------------
+
+        st.subheader("🔍 Detailed Customer Analysis")
+
+        st.dataframe(
+            merged_df,
+            use_container_width=True
+        )
